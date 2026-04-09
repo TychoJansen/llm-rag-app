@@ -20,10 +20,11 @@ Flow:
 2. Backend processes and stores embeddings in ChromaDB
 3. User asks a question
 4. Relevant document chunks are retrieved
+5. Ask LLM (OpenAI or local via Ollama) for an answer based on retrieved context
 
 How to run:
 - Start backend:
-    poetry run python -m uvicorn llm_rag_app.app.main:app --reload
+    poetry run python -m uvicorn app.main:app --reload
 
 - Start frontend:
     streamlit run frontend.py
@@ -45,7 +46,8 @@ st.sidebar.markdown("""
 
 ### Tech
 - FastAPI  
-- ChromaDB    
+- ChromaDB
+- OpenAI / Ollama                      
 """)
 
 st.set_page_config(page_title="RAG App", layout="wide")
@@ -95,16 +97,26 @@ if prompt:
             )
 
             response.raise_for_status()
-            answer = response.json()["answer"]
+            data = response.json()
+
+            answer = data.get("answer", "")
+            warning = data.get("warning")
+            source = data.get("source")
 
         except requests.exceptions.RequestException:
             answer = "⚠️ Backend error. Please check if the API is running."
+            warning = None
+            source = None
 
-    # Show assistant message with proper handling
-    if "quota exceeded" in answer.lower() or "insufficient_quota" in answer.lower():
-        st.warning(answer)
-    else:
-        st.chat_message("assistant").write(answer)
+    # Show warning (quota / fallback info)
+    if warning:
+        st.warning(warning)
+
+    # Show assistant message
+    st.chat_message("assistant").write(answer)
+
+    if source:
+        st.markdown(f"<small>Source: {source}</small>", unsafe_allow_html=True)
 
     # Save assistant message
     st.session_state.messages.append({
