@@ -1,33 +1,21 @@
-"""
-LLM RAG Application - Streamlit Frontend (ChatGPT-style UI)
+"""Streamlit frontend for the LLM RAG Application.
 
-Improvements:
-- ChatGPT-like message bubbles
-- Better layout and spacing
-- Cleaner message handling
-- Warning + source display
-- Structured + maintainable UI
-
-Run:
-streamlit run frontend.py
+Provides a ChatGPT-style UI for uploading PDFs and chatting with documents.
 """
 
-import streamlit as st
 import requests
+import streamlit as st
 
 # -----------------------------
 # PAGE CONFIG
 # -----------------------------
-st.set_page_config(
-    page_title="RAG Chat",
-    page_icon="🤖",
-    layout="centered"
-)
+st.set_page_config(page_title="RAG Chat", page_icon="🤖", layout="centered")
 
 # -----------------------------
 # CUSTOM STYLING (ChatGPT-like)
 # -----------------------------
-st.markdown("""
+st.markdown(
+    """
 <style>
 
 /* Main container spacing */
@@ -62,7 +50,9 @@ div[data-testid="stChatMessage"]:has(div:contains("assistant")) > div {
 }
 
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 # -----------------------------
 # SIDEBAR
@@ -70,17 +60,19 @@ div[data-testid="stChatMessage"]:has(div:contains("assistant")) > div {
 with st.sidebar:
     st.title("📄 RAG App")
 
-    st.markdown("""
+    st.markdown(
+        """
     ### How it works
-    1. Upload a PDF  
-    2. Ask questions  
-    3. Get answers from your document  
+    1. Upload a PDF
+    2. Ask questions
+    3. Get answers from your document
 
     ### Tech
-    - FastAPI  
-    - ChromaDB  
-    - OpenAI / Ollama  
-    """)
+    - FastAPI
+    - ChromaDB
+    - OpenAI / Ollama
+    """
+    )
 
     uploaded_file = st.file_uploader("Upload a PDF", type="pdf")
 
@@ -89,11 +81,7 @@ with st.sidebar:
             files = {"file": uploaded_file.getvalue()}
 
             try:
-                response = requests.post(
-                    "http://127.0.0.1:8000/upload",
-                    files=files,
-                    timeout=60
-                )
+                response = requests.post("http://127.0.0.1:8000/upload", files=files, timeout=60)
                 response.raise_for_status()
                 st.success("✅ Document processed!")
 
@@ -131,20 +119,13 @@ if prompt:
     with st.chat_message("user"):
         st.write(prompt)
 
-    st.session_state.messages.append({
-        "role": "user",
-        "content": prompt
-    })
+    st.session_state.messages.append({"role": "user", "content": prompt})
 
     # --- Assistant response ---
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
             try:
-                response = requests.get(
-                    "http://127.0.0.1:8000/ask",
-                    params={"question": prompt},
-                    timeout=30
-                )
+                response = requests.get("http://127.0.0.1:8000/ask", params={"question": prompt}, timeout=30)
 
                 try:
                     data = response.json()
@@ -184,7 +165,4 @@ if prompt:
             st.caption(f"Source: {source}")
 
     # --- Save assistant message ---
-    st.session_state.messages.append({
-        "role": "assistant",
-        "content": answer
-    })
+    st.session_state.messages.append({"role": "assistant", "content": answer})
