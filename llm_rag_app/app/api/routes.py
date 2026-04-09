@@ -2,8 +2,8 @@ from fastapi import APIRouter, UploadFile, File
 import shutil
 import os
 
-from llm_rag_app.app.helpers import load_pdf, split_text
-from llm_rag_app.app.rag import add_documents, query
+from llm_rag_app.app.services.pdf_utilities import load_pdf, split_text
+from llm_rag_app.app.services.rag import add_documents, query
 
 router = APIRouter()
 
