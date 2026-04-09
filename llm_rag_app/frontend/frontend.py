@@ -146,12 +146,19 @@ if prompt:
                     timeout=30
                 )
 
-                response.raise_for_status()
-                data = response.json()
+                try:
+                    data = response.json()
+                except Exception:
+                    data = {}
 
-                answer = data.get("answer", "")
-                warning = data.get("warning")
-                source = data.get("source")
+                if response.status_code != 200:
+                    answer = data.get("answer", "❌ Backend error (no details)")
+                    warning = data.get("warning")
+                    source = data.get("source")
+                else:
+                    answer = data.get("answer", "")
+                    warning = data.get("warning")
+                    source = data.get("source")
 
             except requests.exceptions.RequestException:
                 answer = "⚠️ Backend error. Please check if the API is running."
@@ -164,7 +171,13 @@ if prompt:
             st.session_state.quota_warning_shown = True
 
         # --- Show answer ---
-        st.write(answer)
+        if answer:
+            if "Ollama is not running" in answer:
+                st.error("⚠️ Local LLM Ollama is not running.\n\nStart it  in terminal with:\n\n`ollama run llama3`.")
+            elif answer.startswith("❌"):
+                st.error(answer)
+            else:
+                st.write(answer)
 
         # --- Show source ---
         if source:
