@@ -1,124 +1,176 @@
 """
-LLM RAG Application - Streamlit Frontend
+LLM RAG Application - Streamlit Frontend (ChatGPT-style UI)
 
-This application provides a user-friendly interface for interacting with a 
-Retrieval-Augmented Generation (RAG) system.
+Improvements:
+- ChatGPT-like message bubbles
+- Better layout and spacing
+- Cleaner message handling
+- Warning + source display
+- Structured + maintainable UI
 
-Features:
-- Upload PDF documents for processing
-- Ask questions about uploaded documents
-- Chat-style interface with conversation memory
-- Real-time responses from a local LLM (via Ollama)
-
-Architecture:
-- Frontend: Streamlit (this file)
-- Backend: FastAPI (see app/main.py)
-- Vector Database: ChromaDB (stores document embeddings)
-
-Flow:
-1. User uploads a PDF document
-2. Backend processes and stores embeddings in ChromaDB
-3. User asks a question
-4. Relevant document chunks are retrieved
-5. Ask LLM (OpenAI or local via Ollama) for an answer based on retrieved context
-
-How to run:
-- Start backend:
-    poetry run python -m uvicorn app.main:app --reload
-
-- Start frontend:
-    streamlit run frontend.py
-
-Author:
-Tycho Jansen
+Run:
+streamlit run frontend.py
 """
 
 import streamlit as st
 import requests
 
-st.sidebar.title("📄 RAG App")
+# -----------------------------
+# PAGE CONFIG
+# -----------------------------
+st.set_page_config(
+    page_title="RAG Chat",
+    page_icon="🤖",
+    layout="centered"
+)
 
-st.sidebar.markdown("""
-### How it works
-1. Upload a PDF  
-2. Ask questions  
-3. Get answers from your document  
+# -----------------------------
+# CUSTOM STYLING (ChatGPT-like)
+# -----------------------------
+st.markdown("""
+<style>
 
-### Tech
-- FastAPI  
-- ChromaDB
-- OpenAI / Ollama                      
-""")
+/* Main container spacing */
+.block-container {
+    padding-top: 2rem;
+    padding-bottom: 2rem;
+}
 
-st.set_page_config(page_title="RAG App", layout="wide")
-st.title("🧠 Ask Your Documents")
+/* Chat bubbles */
+div[data-testid="stChatMessage"] > div {
+    padding: 12px 16px;
+    border-radius: 12px;
+    max-width: 75%;
+}
 
-# Upload
-uploaded_file = st.file_uploader("Upload a PDF", type="pdf")
+/* User message */
+div[data-testid="stChatMessage"]:has(div:contains("user")) > div {
+    background-color: #2b2b2b;
+    color: white;
+    margin-left: auto;
+}
 
-if uploaded_file:
-    with st.spinner("Processing document..."):
-        files = {"file": uploaded_file.getvalue()}
-        response = requests.post(
-            "http://127.0.0.1:8000/upload",
-            files=files
-        )
+/* Assistant message */
+div[data-testid="stChatMessage"]:has(div:contains("assistant")) > div {
+    background-color: #f1f1f1;
+    color: black;
+}
 
-    st.success("✅ Document processed! You can now ask questions.")
+/* Input styling */
+.stChatFloatingInputContainer {
+    padding-bottom: 1rem;
+}
 
-# Ask question
+</style>
+""", unsafe_allow_html=True)
+
+# -----------------------------
+# SIDEBAR
+# -----------------------------
+with st.sidebar:
+    st.title("📄 RAG App")
+
+    st.markdown("""
+    ### How it works
+    1. Upload a PDF  
+    2. Ask questions  
+    3. Get answers from your document  
+
+    ### Tech
+    - FastAPI  
+    - ChromaDB  
+    - OpenAI / Ollama  
+    """)
+
+    uploaded_file = st.file_uploader("Upload a PDF", type="pdf")
+
+    if uploaded_file:
+        with st.spinner("Processing document..."):
+            files = {"file": uploaded_file.getvalue()}
+
+            try:
+                response = requests.post(
+                    "http://127.0.0.1:8000/upload",
+                    files=files,
+                    timeout=60
+                )
+                response.raise_for_status()
+                st.success("✅ Document processed!")
+
+            except requests.exceptions.RequestException:
+                st.error("❌ Upload failed. Is the backend running?")
+
+# -----------------------------
+# TITLE
+# -----------------------------
+st.title("🧠 Chat with your Documents")
+
+# -----------------------------
+# SESSION STATE
+# -----------------------------
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Show previous messages
+# -----------------------------
+# DISPLAY CHAT HISTORY
+# -----------------------------
 for msg in st.session_state.messages:
-    st.chat_message(msg["role"]).write(msg["content"])
+    with st.chat_message(msg["role"]):
+        st.write(msg["content"])
 
-# Chat input
-prompt = st.chat_input("Ask something about your document")
+if "quota_warning_shown" not in st.session_state:
+    st.session_state.quota_warning_shown = False
+
+# -----------------------------
+# CHAT INPUT
+# -----------------------------
+prompt = st.chat_input("Ask something about your document...")
 
 if prompt:
-    # Show user message
-    st.chat_message("user").write(prompt)
+    # --- User message ---
+    with st.chat_message("user"):
+        st.write(prompt)
 
-    # Save user message
     st.session_state.messages.append({
         "role": "user",
         "content": prompt
     })
 
-    # Call API
-    with st.spinner("Thinking..."):
-        try:
-            response = requests.get(
-                "http://127.0.0.1:8000/ask",
-                params={"question": prompt},
-                timeout=30
-            )
+    # --- Assistant response ---
+    with st.chat_message("assistant"):
+        with st.spinner("Thinking..."):
+            try:
+                response = requests.get(
+                    "http://127.0.0.1:8000/ask",
+                    params={"question": prompt},
+                    timeout=30
+                )
 
-            response.raise_for_status()
-            data = response.json()
+                response.raise_for_status()
+                data = response.json()
 
-            answer = data.get("answer", "")
-            warning = data.get("warning")
-            source = data.get("source")
+                answer = data.get("answer", "")
+                warning = data.get("warning")
+                source = data.get("source")
 
-        except requests.exceptions.RequestException:
-            answer = "⚠️ Backend error. Please check if the API is running."
-            warning = None
-            source = None
+            except requests.exceptions.RequestException:
+                answer = "⚠️ Backend error. Please check if the API is running."
+                warning = None
+                source = None
 
-    # Show warning (quota / fallback info)
-    if warning:
-        st.warning(warning)
+        # --- Show warning ---
+        if warning and not st.session_state.quota_warning_shown:
+            st.warning(warning)
+            st.session_state.quota_warning_shown = True
 
-    # Show assistant message
-    st.chat_message("assistant").write(answer)
+        # --- Show answer ---
+        st.write(answer)
 
-    if source:
-        st.markdown(f"<small>Source: {source}</small>", unsafe_allow_html=True)
+        # --- Show source ---
+        if source:
+            st.caption(f"Source: {source}")
 
-    # Save assistant message
+    # --- Save assistant message ---
     st.session_state.messages.append({
         "role": "assistant",
         "content": answer
