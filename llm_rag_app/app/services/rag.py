@@ -1,6 +1,6 @@
 from openai import OpenAI
-from llm_rag_app.app.chroma import collection
-from llm_rag_app.app.config import OPENAI_API_KEY
+from llm_rag_app.app.db.chroma import collection
+from llm_rag_app.app.core.config import OPENAI_API_KEY
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
