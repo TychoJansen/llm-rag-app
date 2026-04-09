@@ -2,13 +2,17 @@ import requests
 from openai import OpenAI, RateLimitError
 
 from llm_rag_app.app.db.chroma import collection
-from llm_rag_app.app.core.config import OPENAI_API_KEY
-from llm_rag_app.app.core.config import OLLAMA_URL
-from llm_rag_app.app.core.config import LOCAL_MODEL
+
+try:
+    from llm_rag_app.app.core.config import OPENAI_API_KEY, OLLAMA_URL, LOCAL_MODEL
+except ImportError as e:
+    print(f"Error importing config: {e}, make sure you have a config.py with the loaded api key, ollama url, and local model.")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-
+# ------------------------
+# Document ingestion
+# ------------------------
 def add_documents(chunks: list[str]):
     """Add document chunks to ChromaDB."""
     collection.add(
@@ -16,15 +20,25 @@ def add_documents(chunks: list[str]):
         ids=[str(i) for i in range(len(chunks))]
     )
 
+
 # ------------------------
 # Local LLM (Ollama)
 # ------------------------
+def is_ollama_running() -> bool:
+    """Check if Ollama is running."""
+    try:
+        response = requests.get("http://localhost:11434", timeout=2)
+        return response.status_code == 200
+    except requests.exceptions.RequestException:
+        return False
+
+
 def call_local_llm(prompt: str) -> str:
     """
     Call a local LLM via Ollama.
-    Make sure Ollama is running:
-    ollama run llama3
+    Assumes Ollama is already running.
     """
+
     response = requests.post(
         OLLAMA_URL,
         json={
@@ -34,23 +48,44 @@ def call_local_llm(prompt: str) -> str:
         },
         timeout=60
     )
+
+    response.raise_for_status()
     return response.json()["response"]
 
+
+def try_local_llm(prompt: str):
+    """
+    Safely try the local LLM.
+    Returns: (answer, error)
+    """
+    if not is_ollama_running():
+        return None, "Ollama is not running. Start it with: `ollama serve`"
+
+    try:
+        answer = call_local_llm(prompt)
+        return answer, None
+    except requests.exceptions.Timeout:
+        return None, "Local LLM timeout"
+    except Exception as e:
+        return None, str(e)
+
+
 # ------------------------
-# Try OpenAI first, then fallback to local LLM
+# Main query function
 # ------------------------
 def query(question: str):
     """Query the RAG system for an answer."""
 
     # ------------------------
-    # Retrieve context
+    # Retrieve context safely
     # ------------------------
     results = collection.query(
         query_texts=[question],
         n_results=3
     )
 
-    context = "\n".join(results["documents"][0])
+    documents = results.get("documents", [[]])[0]
+    context = "\n".join(documents)
 
     prompt = f"""
     Answer the question based ONLY on the context below.
@@ -63,7 +98,7 @@ def query(question: str):
     """
 
     # ------------------------
-    # Try OpenAI
+    # Try OpenAI first
     # ------------------------
     try:
         response = client.chat.completions.create(
@@ -78,49 +113,35 @@ def query(question: str):
         }
 
     # ------------------------
-    # Quota error → warn + fallback
+    # OpenAI failure → fallback
     # ------------------------
-    except RateLimitError:
-        warning = (
-            "⚠️ OpenAI quota exceeded.\n\n"
-            "👉 Using local LLM instead.\n\n"
-            "Fix it here:\n"
-            "1. https://platform.openai.com/account/billing\n"
-            "2. Add a payment method\n"
-        )
+    except Exception as e:
 
-        try:
-            answer = call_local_llm(prompt)
+        warning = None
 
+        # Detect quota / rate limit specifically
+        if isinstance(e, RateLimitError):
+            warning = (
+                "⚠️ OpenAI quota exceeded.\n\n"
+                "👉 Trying local LLM...\n\n"
+                "Fix it here:\n"
+                "https://platform.openai.com/account/billing"
+            )
+        else:
+            warning = "⚠️ OpenAI failed. Trying local LLM..."
+
+        # Try local LLM
+        answer, error = try_local_llm(prompt)
+
+        if answer:
             return {
                 "answer": answer,
                 "source": "local",
-                "warning": warning
+                "warning": warning or "⚠️ Using local LLM fallback"
             }
 
-        except Exception:
-            return {
-                "answer": "❌ Local LLM also failed.",
-                "source": "error",
-                "warning": warning
-            }
-
-    # ------------------------
-    # Other errors → fallback
-    # ------------------------
-    except Exception:
-        try:
-            answer = call_local_llm(prompt)
-
-            return {
-                "answer": answer,
-                "source": "local",
-                "warning": None
-            }
-
-        except Exception:
-            return {
-                "answer": "❌ Both OpenAI and local LLM failed.",
-                "source": "error",
-                "warning": None
-            }
+        return {
+            "answer": f"❌ All LLMs failed: {error}",
+            "source": "error",
+            "warning": warning
+        }
