@@ -5,7 +5,8 @@ Provides a ChatGPT-style UI for uploading PDFs and chatting with documents.
 
 import hashlib
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 import requests
 import streamlit as st
@@ -14,6 +15,12 @@ BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
 UPLOAD_TIMEOUT = 120
 # The backend may first wait for OpenAI and then for the local LLM, so allow plenty of time
 ASK_TIMEOUT = 120
+
+EXAMPLE_QUESTIONS = [
+    "Summarize this document",
+    "What are the key points?",
+    "Which names, dates or numbers are mentioned?",
+]
 
 
 def error_detail(response: requests.Response) -> str:
@@ -31,11 +38,26 @@ def error_detail(response: requests.Response) -> str:
         return f"HTTP {response.status_code}"
 
 
-def fetch_documents() -> list:
-    """Fetch the names of the uploaded documents from the backend.
+@st.cache_data(ttl=15, show_spinner=False)
+def fetch_health() -> Optional[Dict[str, Any]]:
+    """Fetch which LLMs are available. Cached briefly, because Streamlit reruns on every interaction.
 
     Returns:
-        list: Document names, or an empty list when the backend is unreachable.
+        Optional[Dict[str, Any]]: Dict with "openai" and "ollama" flags, or None when the backend is unreachable.
+    """
+    try:
+        response = requests.get(f"{BACKEND_URL}/health", timeout=5)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException:
+        return None
+
+
+def fetch_documents() -> List[Dict[str, Any]]:
+    """Fetch the uploaded documents from the backend.
+
+    Returns:
+        List[Dict[str, Any]]: Documents with name, pages and chunks, or an empty list when the backend is unreachable.
     """
     try:
         response = requests.get(f"{BACKEND_URL}/documents", timeout=5)
@@ -43,6 +65,53 @@ def fetch_documents() -> list:
         return response.json().get("documents", [])
     except requests.exceptions.RequestException:
         return []
+
+
+def upload_file(name: str, content: bytes) -> None:
+    """Upload a PDF to the backend and show the result.
+
+    Args:
+        name (str): File name.
+        content (bytes): File content.
+    """
+    files = {"file": (name, content, "application/pdf")}
+
+    try:
+        response = requests.post(f"{BACKEND_URL}/upload", files=files, timeout=UPLOAD_TIMEOUT)
+    except requests.exceptions.RequestException:
+        st.error(f"❌ Upload of {name} failed. Is the backend running?")
+        return
+
+    if response.ok:
+        st.session_state.processed_files[hashlib.sha256(content).hexdigest()] = name
+        st.toast(f"✅ {name} processed ({response.json().get('chunks')} chunks)")
+    else:
+        st.error(f"❌ Upload of {name} failed: {error_detail(response)}")
+
+
+def delete_document(name: Optional[str] = None) -> None:
+    """Delete one document, or all documents when name is None, and reset the uploader.
+
+    Args:
+        name (Optional[str]): Name of the document to delete. Deletes all documents when None.
+    """
+    url = f"{BACKEND_URL}/documents" + (f"/{quote(name, safe='')}" if name else "")
+
+    try:
+        requests.delete(url, timeout=10).raise_for_status()
+    except requests.exceptions.RequestException:
+        st.error("❌ Could not delete document(s).")
+        return
+
+    # Forget the deleted files, so uploading them again works. Changing the uploader key clears
+    # the widget, otherwise the files still in it would be re-uploaded on the next rerun.
+    st.session_state.processed_files = {
+        file_hash: file_name
+        for file_hash, file_name in st.session_state.processed_files.items()
+        if name is not None and file_name != name
+    }
+    st.session_state.uploader_key += 1
+    st.rerun()
 
 
 def ask_backend(question: str) -> Dict[str, Any]:
@@ -100,6 +169,53 @@ def show_sources(sources: List[Dict[str, Any]]) -> None:
             st.caption(source.get("text", ""))
 
 
+def show_status(health: Optional[Dict[str, Any]]) -> None:
+    """Show whether the backend and the LLMs are available.
+
+    Args:
+        health (Optional[Dict[str, Any]]): Result of fetch_health().
+    """
+    if health is None:
+        st.markdown("🔴 Backend")
+        st.caption("Start it with `poetry run python llm_rag_app/run_app.py`")
+        return
+
+    st.markdown(
+        f"🟢 Backend &nbsp; {'🟢' if health.get('openai') else '⚪'} OpenAI &nbsp; "
+        f"{'🟢' if health.get('ollama') else '🔴'} Ollama"
+    )
+    if not health.get("openai") and not health.get("ollama"):
+        st.caption("⚠️ No LLM available: add an OpenAI key or start Ollama with `ollama serve`")
+
+
+def show_welcome(has_documents: bool) -> None:
+    """Show an introduction and example questions when the chat is empty.
+
+    Args:
+        has_documents (bool): Whether any documents are uploaded.
+    """
+    st.markdown(
+        """
+Ask questions about your PDFs and get answers based on their content,
+with the fragments and page numbers they came from.
+
+1. **Upload** one or more PDFs in the sidebar
+2. **Ask** a question below, in any language
+3. **Check** the sources under each answer
+"""
+    )
+
+    if not has_documents:
+        st.info("👈 Upload a PDF in the sidebar to get started.")
+        return
+
+    st.markdown("**Try asking:**")
+    for column, question in zip(st.columns(len(EXAMPLE_QUESTIONS)), EXAMPLE_QUESTIONS):
+        if column.button(question, width="stretch"):
+            st.session_state.pending_prompt = question
+            st.rerun()
+
+
 # -----------------------------
 # PAGE CONFIG
 # -----------------------------
@@ -114,9 +230,9 @@ if "messages" not in st.session_state:
 if "quota_warning_shown" not in st.session_state:
     st.session_state.quota_warning_shown = False
 
-# Hashes of files already sent to the backend, so reruns don't upload them again
+# Hash -> name of files already sent to the backend, so reruns don't upload them again
 if "processed_files" not in st.session_state:
-    st.session_state.processed_files = set()
+    st.session_state.processed_files = {}
 
 # Changing the uploader key resets the widget, so a deleted file isn't re-uploaded on the next rerun
 if "uploader_key" not in st.session_state:
@@ -128,52 +244,43 @@ if "uploader_key" not in st.session_state:
 with st.sidebar:
     st.title("📄 RAG App")
 
-    st.markdown(
-        """
-    ### How it works
-    1. Upload a PDF
-    2. Ask questions
-    3. Get answers from your document
-    """
+    show_status(fetch_health())
+
+    st.divider()
+
+    uploaded_files = st.file_uploader(
+        "Upload PDFs", type="pdf", accept_multiple_files=True, key=f"uploader_{st.session_state.uploader_key}"
     )
 
-    uploaded_file = st.file_uploader("Upload a PDF", type="pdf", key=f"uploader_{st.session_state.uploader_key}")
-
-    if uploaded_file:
-        content = uploaded_file.getvalue()
-        file_hash = hashlib.sha256(content).hexdigest()
-
-        if file_hash not in st.session_state.processed_files:
-            with st.spinner("Processing document..."):
-                files = {"file": (uploaded_file.name, content, "application/pdf")}
-
-                try:
-                    response = requests.post(f"{BACKEND_URL}/upload", files=files, timeout=UPLOAD_TIMEOUT)
-                    if response.ok:
-                        st.session_state.processed_files.add(file_hash)
-                        st.success(f"✅ Document processed! ({response.json().get('chunks')} chunks)")
-                    else:
-                        st.error(f"❌ Upload failed: {error_detail(response)}")
-
-                except requests.exceptions.RequestException:
-                    st.error("❌ Upload failed. Is the backend running?")
+    new_files = [
+        f
+        for f in uploaded_files or []
+        if hashlib.sha256(f.getvalue()).hexdigest() not in st.session_state.processed_files
+    ]
+    for uploaded_file in new_files:
+        with st.spinner(f"Processing {uploaded_file.name}..."):
+            upload_file(uploaded_file.name, uploaded_file.getvalue())
 
     documents = fetch_documents()
+
     if documents:
-        st.markdown("### Documents")
-        for name in documents:
-            st.markdown(f"- {name}")
+        st.markdown(f"### Documents ({len(documents)})")
 
-        if st.button("🗑️ Delete all documents"):
-            try:
-                requests.delete(f"{BACKEND_URL}/documents", timeout=10).raise_for_status()
-                st.session_state.processed_files = set()
-                st.session_state.uploader_key += 1
-                st.rerun()
-            except requests.exceptions.RequestException:
-                st.error("❌ Could not delete documents.")
+        for document in documents:
+            name_column, delete_column = st.columns([5, 1], vertical_alignment="center")
+            pages = (
+                f"{document['pages']} page{'s' if document['pages'] != 1 else ''} · " if document.get("pages") else ""
+            )
+            name_column.markdown(f"**{document['name']}**  \n:gray[{pages}{document['chunks']} chunks]")
+            if delete_column.button("🗑️", key=f"delete_{document['name']}", help=f"Delete {document['name']}"):
+                delete_document(document["name"])
 
-    if st.session_state.messages and st.button("🧹 Clear chat"):
+        with st.popover("🗑️ Delete all documents", width="stretch"):
+            st.markdown("This removes **all** documents from the database.")
+            if st.button("Yes, delete all", type="primary", width="stretch"):
+                delete_document()
+
+    if st.session_state.messages and st.button("🧹 Clear chat", width="stretch"):
         st.session_state.messages = []
         st.rerun()
 
@@ -183,19 +290,23 @@ with st.sidebar:
 st.title("🧠 Chat with your Documents")
 
 # -----------------------------
-# DISPLAY CHAT HISTORY
+# CHAT INPUT
 # -----------------------------
+# The chat input is always shown at the bottom; an example question clicked on the welcome screen is used instead
+prompt = st.chat_input("Ask something about your documents...") or st.session_state.pop("pending_prompt", None)
+
+# -----------------------------
+# WELCOME / CHAT HISTORY
+# -----------------------------
+if not st.session_state.messages and not prompt:
+    show_welcome(has_documents=bool(documents))
+
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.write(msg["content"])
         show_sources(msg.get("sources", []))
         if msg.get("source"):
             st.caption(f"Answered by: {msg['source']}")
-
-# -----------------------------
-# CHAT INPUT
-# -----------------------------
-prompt = st.chat_input("Ask something about your document...")
 
 if prompt:
     # --- User message ---

@@ -9,9 +9,9 @@ from typing import Any, Dict
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 
-from llm_rag_app.app.core.config import CHUNK_OVERLAP, CHUNK_SIZE, DATA_DIR
+from llm_rag_app.app.core.config import CHUNK_OVERLAP, CHUNK_SIZE, DATA_DIR, OPENAI_API_KEY
 from llm_rag_app.app.services.pdf_utilities import chunk_pages, load_pdf
-from llm_rag_app.app.services.rag import add_documents, delete_documents, list_documents, query
+from llm_rag_app.app.services.rag import add_documents, delete_documents, is_ollama_running, list_documents, query
 
 router = APIRouter()
 
@@ -59,11 +59,30 @@ def upload(file: UploadFile = File(...)) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail="No text found in PDF (scanned documents are not supported)")
 
     try:
-        add_documents(chunks, source=filename)
+        add_documents(chunks, source=filename, pages=len(pages))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    return {"status": "success", "message": "File processed and stored", "file": filename, "chunks": len(chunks)}
+    return {
+        "status": "success",
+        "message": "File processed and stored",
+        "file": filename,
+        "pages": len(pages),
+        "chunks": len(chunks),
+    }
+
+
+# ------------------------
+# Health endpoint
+# ------------------------
+@router.get("/health")
+def health() -> Dict[str, Any]:
+    """Endpoint to check which LLMs are available.
+
+    Returns:
+        Dict[str, Any]: Response with "openai" (an API key is configured) and "ollama" (the server is reachable).
+    """
+    return {"status": "success", "openai": bool(OPENAI_API_KEY), "ollama": is_ollama_running()}
 
 
 # ------------------------
@@ -74,9 +93,29 @@ def documents() -> Dict[str, Any]:
     """Endpoint to list the uploaded documents.
 
     Returns:
-        Dict[str, Any]: Response containing the document names.
+        Dict[str, Any]: Response containing the documents with their name, number of pages and chunks.
     """
     return {"status": "success", "documents": list_documents()}
+
+
+@router.delete("/documents/{name}")
+def delete_document(name: str) -> Dict[str, Any]:
+    """Endpoint to delete a single document from the vector database.
+
+    Args:
+        name (str): Name of the document to delete.
+
+    Returns:
+        Dict[str, Any]: Response containing status and message.
+
+    Raises:
+        HTTPException: If the document doesn't exist.
+    """
+    if name not in {document["name"] for document in list_documents()}:
+        raise HTTPException(status_code=404, detail=f"Document '{name}' not found")
+
+    delete_documents(name)
+    return {"status": "success", "message": f"Document '{name}' deleted"}
 
 
 @router.delete("/documents")

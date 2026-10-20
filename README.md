@@ -8,7 +8,8 @@ A Retrieval-Augmented Generation (RAG) application that allows users to upload P
 - **Multilingual Search**: Local multilingual embeddings, so you can ask Dutch questions about English documents and vice versa
 - **Source Citations**: Every answer shows the document fragments, page numbers and relevance scores it was based on
 - **Relevance Threshold**: Questions unrelated to your documents are recognized instead of answered with made-up information
-- **Multiple Documents**: Upload several PDFs, see which are indexed, and delete them from the UI
+- **Multiple Documents**: Upload several PDFs at once, see which are indexed, and delete them one by one or all at once
+- **Status Overview**: See at a glance whether the backend, OpenAI and Ollama are available
 - **Multi-LLM Support**:
   - Primary: OpenAI GPT-4o-mini
   - Fallback: Local Ollama models (e.g., Llama 3)
@@ -41,8 +42,10 @@ The remaining chunks, each labelled with its document and page, are put into a p
 
 ### 5. The chat interface
 The Streamlit frontend provides:
-- **Upload** in the sidebar. Each file is sent to the backend only once, even though Streamlit reruns the page on every interaction.
-- **Document list** with a "Delete all documents" button.
+- **Status indicator** in the sidebar showing whether the backend, OpenAI (API key configured) and Ollama are available.
+- **Upload** of one or more PDFs in the sidebar. Each file is sent to the backend only once, even though Streamlit reruns the page on every interaction.
+- **Document list** with the number of pages and chunks per document, a delete button per document, and "Delete all documents" with a confirmation.
+- **Welcome screen** with a short explanation and clickable example questions while the chat is empty.
 - **Chat** with history and a "Clear chat" button.
 - **Sources** below each answer: a collapsible block with the fragments used, their document, page and relevance score.
 - **Warnings and errors**, for example when the OpenAI quota is exceeded or Ollama isn't running.
@@ -157,7 +160,7 @@ The interactive API documentation is available at `http://127.0.0.1:8000/docs` w
 
 ## Usage
 
-1. **Upload a PDF**: Use the sidebar in the Streamlit interface to upload a PDF document
+1. **Upload PDFs**: Use the sidebar in the Streamlit interface to upload one or more PDF documents
 2. **Wait for processing**: The app extracts the text per page, splits it into sentence-aware chunks, and indexes them
 3. **Ask questions**: Type questions about your documents in the chat, in any language
 4. **Get answers**: Open "Sources" under an answer to see the document fragments, page numbers and relevance scores it was based on
@@ -173,10 +176,16 @@ Upload a PDF document for processing.
 Uploading a file with the same name again replaces its earlier chunks. Returns `400` for non-PDF files and for PDFs without extractable text (e.g. scanned documents).
 
 ### GET `/documents`
-List the names of the uploaded documents.
+List the uploaded documents, each with `name`, `pages` and `chunks`.
+
+### DELETE `/documents/{name}`
+Delete a single document from the vector database. Returns `404` if it doesn't exist.
 
 ### DELETE `/documents`
 Delete all documents from the vector database.
+
+### GET `/health`
+Check which LLMs are available: `openai` (an API key is configured) and `ollama` (the Ollama server is reachable).
 
 ### GET `/ask`
 Query the RAG system with a question.

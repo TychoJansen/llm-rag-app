@@ -29,12 +29,13 @@ client: Optional[OpenAI] = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else
 # ------------------------
 # Document ingestion
 # ------------------------
-def add_documents(chunks: List[Dict[str, Any]], source: str) -> None:
+def add_documents(chunks: List[Dict[str, Any]], source: str, pages: int) -> None:
     """Add document chunks to ChromaDB, replacing earlier chunks of the same source.
 
     Args:
         chunks (List[Dict[str, Any]]): List of chunks as dicts with "text" and "page" keys.
         source (str): Name of the document the chunks belong to.
+        pages (int): Total number of pages in the document.
     """
     texts = [chunk["text"] for chunk in chunks]
 
@@ -43,7 +44,9 @@ def add_documents(chunks: List[Dict[str, Any]], source: str) -> None:
         documents=texts,
         embeddings=embed_documents(texts),
         ids=[f"{source}-{i}" for i in range(len(chunks))],
-        metadatas=[{"source": source, "page": chunk["page"], "chunk": i} for i, chunk in enumerate(chunks)],
+        metadatas=[
+            {"source": source, "page": chunk["page"], "pages": pages, "chunk": i} for i, chunk in enumerate(chunks)
+        ],
     )
 
 
@@ -61,14 +64,24 @@ def delete_documents(source: Optional[str] = None) -> None:
         collection.delete(where={"source": source})
 
 
-def list_documents() -> List[str]:
-    """List the names of all documents stored in ChromaDB.
+def list_documents() -> List[Dict[str, Any]]:
+    """List all documents stored in ChromaDB.
 
     Returns:
-        List[str]: Sorted list of document names.
+        List[Dict[str, Any]]: Documents sorted by name, as dicts with "name", "pages" and "chunks" keys.
     """
     metadatas = collection.get(include=["metadatas"])["metadatas"] or []
-    return sorted({m["source"] for m in metadatas if m and "source" in m})
+
+    documents: Dict[str, Dict[str, Any]] = {}
+    for meta in metadatas:
+        if not meta or "source" not in meta:
+            continue
+        document = documents.setdefault(
+            meta["source"], {"name": meta["source"], "pages": meta.get("pages"), "chunks": 0}
+        )
+        document["chunks"] += 1
+
+    return sorted(documents.values(), key=lambda document: document["name"].lower())
 
 
 # ------------------------
