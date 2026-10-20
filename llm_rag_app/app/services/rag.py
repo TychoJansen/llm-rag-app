@@ -20,6 +20,7 @@ from llm_rag_app.app.core.config import (
     OPENAI_MODEL,
 )
 from llm_rag_app.app.db.chroma import collection
+from llm_rag_app.app.services.embeddings import embed_documents, embed_query
 
 # Only create the OpenAI client when a key is configured, so the app also runs with just Ollama
 client: Optional[OpenAI] = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
@@ -35,9 +36,12 @@ def add_documents(chunks: List[Dict[str, Any]], source: str) -> None:
         chunks (List[Dict[str, Any]]): List of chunks as dicts with "text" and "page" keys.
         source (str): Name of the document the chunks belong to.
     """
+    texts = [chunk["text"] for chunk in chunks]
+
     delete_documents(source)
     collection.add(
-        documents=[chunk["text"] for chunk in chunks],
+        documents=texts,
+        embeddings=embed_documents(texts),
         ids=[f"{source}-{i}" for i in range(len(chunks))],
         metadatas=[{"source": source, "page": chunk["page"], "chunk": i} for i, chunk in enumerate(chunks)],
     )
@@ -115,17 +119,16 @@ def try_local_llm(prompt: str) -> Tuple[Optional[str], Optional[str]]:
 def relevance(distance: float) -> float:
     """Convert a ChromaDB distance to a relevance score.
 
-    The collection uses squared L2 distance on normalized embeddings, for which
-    distance = 2 - 2 * cosine similarity. The score is therefore the cosine similarity:
-    1 means identical meaning, around 0 means unrelated.
+    The collection uses cosine distance (1 - cosine similarity), so the score is the
+    cosine similarity between the question and the chunk: higher means more related.
 
     Args:
-        distance (float): Squared L2 distance returned by ChromaDB.
+        distance (float): Cosine distance returned by ChromaDB.
 
     Returns:
         float: Cosine similarity between the question and the chunk.
     """
-    return 1 - distance / 2
+    return 1 - distance
 
 
 def query(question: str) -> Dict[str, Any]:
@@ -152,7 +155,7 @@ def query(question: str) -> Dict[str, Any]:
             "sources": [],
         }
 
-    results = collection.query(query_texts=[question], n_results=min(N_RESULTS, collection.count()))
+    results = collection.query(query_embeddings=[embed_query(question)], n_results=min(N_RESULTS, collection.count()))
 
     documents = results.get("documents", [[]])[0]
     metadatas = results.get("metadatas", [[]])[0]

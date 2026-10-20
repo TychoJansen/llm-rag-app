@@ -25,8 +25,13 @@ OLLAMA_URL = f"{OLLAMA_BASE_URL}/api/generate"
 LOCAL_MODEL = os.getenv("LOCAL_MODEL", "llama3")
 LOCAL_LLM_TIMEOUT = int(os.getenv("LOCAL_LLM_TIMEOUT", "60"))
 
+# Multilingual model, so Dutch questions also match English documents and vice versa.
+# Its scores are spread widely (unrelated ≈ 0, related ≈ 0.2-0.5), which makes MIN_RELEVANCE reliable.
+# When changing the model, re-measure MIN_RELEVANCE: E5 models e.g. score everything between 0.65 and 0.85.
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+
 N_RESULTS = int(os.getenv("N_RESULTS", "4"))
 # Minimum relevance (cosine similarity, -1 to 1) for a chunk to be used as context
-MIN_RELEVANCE = float(os.getenv("MIN_RELEVANCE", "0.1"))
+MIN_RELEVANCE = float(os.getenv("MIN_RELEVANCE", "0.18"))
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "800"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "150"))

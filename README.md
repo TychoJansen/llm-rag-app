@@ -50,7 +50,7 @@ A Retrieval-Augmented Generation (RAG) application that allows users to upload P
    The OpenAI key is optional: without it the app uses the local Ollama model. The old `API_KEY` name still works.
 
    Optional settings (with defaults): `OPENAI_MODEL=gpt-4o-mini`, `LOCAL_MODEL=llama3`,
-   `OLLAMA_BASE_URL=http://localhost:11434`, `LOCAL_LLM_TIMEOUT=60`, `N_RESULTS=4`, `MIN_RELEVANCE=0.1`, `CHUNK_SIZE=800`, `CHUNK_OVERLAP=150`,
+   `OLLAMA_BASE_URL=http://localhost:11434`, `LOCAL_LLM_TIMEOUT=60`, `N_RESULTS=4`, `MIN_RELEVANCE=0.18`, `EMBEDDING_MODEL=sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`, `CHUNK_SIZE=800`, `CHUNK_OVERLAP=150`,
    `DATA_DIR=./data`, `VECTORSTORE_DIR=./vectorstore`, and `BACKEND_URL=http://127.0.0.1:8000` for the frontend.
 
 ## Setup
