@@ -3,13 +3,15 @@
 This module defines the FastAPI routes for uploading PDFs and querying the RAG system.
 """
 
-import os
 import shutil
+from pathlib import Path
 from typing import Any, Dict
 
-from app.services.pdf_utilities import load_pdf, split_text
-from app.services.rag import add_documents, query
 from fastapi import APIRouter, File, HTTPException, UploadFile
+
+from llm_rag_app.app.core.config import DATA_DIR
+from llm_rag_app.app.services.pdf_utilities import load_pdf, split_text
+from llm_rag_app.app.services.rag import add_documents, delete_documents, list_documents, query
 
 router = APIRouter()
 
@@ -18,11 +20,12 @@ router = APIRouter()
 # Upload PDF endpoint
 # ------------------------
 @router.post("/upload")
-async def upload(file: UploadFile = File(...)) -> Dict[str, Any]:
+def upload(file: UploadFile = File(...)) -> Dict[str, Any]:
     """Endpoint to upload a PDF document.
 
     Processes the uploaded PDF by extracting text, splitting into chunks,
-    and adding them to the vector database.
+    and adding them to the vector database. Re-uploading a file with the same
+    name replaces its earlier chunks.
 
     Args:
         file (UploadFile): The uploaded PDF file.
@@ -31,30 +34,64 @@ async def upload(file: UploadFile = File(...)) -> Dict[str, Any]:
         Dict[str, Any]: Response containing status, message, and number of chunks.
 
     Raises:
-        HTTPException: If processing fails.
+        HTTPException: If the file is not a PDF, contains no text, or processing fails.
     """
-    try:
-        os.makedirs("data", exist_ok=True)
+    # Strip any directory components to prevent path traversal
+    filename = Path(file.filename or "").name
+    if not filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
-        file_path = f"data/{file.filename}"
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        file_path = DATA_DIR / filename
 
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
         # Process PDF
-        text = load_pdf(file_path)
+        text = load_pdf(str(file_path))
         chunks = split_text(text)
 
-        add_documents(chunks)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Could not process PDF: {e}")
 
-        return {"status": "success", "message": "File processed and stored", "chunks": len(chunks)}
+    if not chunks:
+        raise HTTPException(status_code=400, detail="No text found in PDF (scanned documents are not supported)")
 
+    try:
+        add_documents(chunks, source=filename)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+    return {"status": "success", "message": "File processed and stored", "file": filename, "chunks": len(chunks)}
+
 
 # ------------------------
-# Ask endpoint (UPDATED)
+# Document management endpoints
+# ------------------------
+@router.get("/documents")
+def documents() -> Dict[str, Any]:
+    """Endpoint to list the uploaded documents.
+
+    Returns:
+        Dict[str, Any]: Response containing the document names.
+    """
+    return {"status": "success", "documents": list_documents()}
+
+
+@router.delete("/documents")
+def clear_documents() -> Dict[str, Any]:
+    """Endpoint to delete all documents from the vector database.
+
+    Returns:
+        Dict[str, Any]: Response containing status and message.
+    """
+    delete_documents()
+    return {"status": "success", "message": "All documents deleted"}
+
+
+# ------------------------
+# Ask endpoint
 # ------------------------
 @router.get("/ask")
 def ask(question: str) -> Dict[str, Any]:
@@ -71,7 +108,7 @@ def ask(question: str) -> Dict[str, Any]:
     Raises:
         HTTPException: If the question is empty or processing fails.
     """
-    if not question:
+    if not question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty")
 
     try:

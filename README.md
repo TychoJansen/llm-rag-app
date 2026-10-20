@@ -45,8 +45,13 @@ A Retrieval-Augmented Generation (RAG) application that allows users to upload P
 3. **Set up environment variables**:
    Create a `.env` file in the root directory:
    ```
-   API_KEY=your_openai_api_key_here
+   OPENAI_API_KEY=your_openai_api_key_here
    ```
+   The OpenAI key is optional: without it the app uses the local Ollama model. The old `API_KEY` name still works.
+
+   Optional settings (with defaults): `OPENAI_MODEL=gpt-4o-mini`, `LOCAL_MODEL=llama3`,
+   `OLLAMA_BASE_URL=http://localhost:11434`, `LOCAL_LLM_TIMEOUT=60`, `N_RESULTS=3`,
+   `DATA_DIR=./data`, `VECTORSTORE_DIR=./vectorstore`, and `BACKEND_URL=http://127.0.0.1:8000` for the frontend.
 
 ## Setup
 
@@ -65,9 +70,11 @@ A Retrieval-Augmented Generation (RAG) application that allows users to upload P
 ### OpenAI Setup (optional)
 
 1. Get an API key from [OpenAI Platform](https://platform.openai.com)
-2. Add it to your `.env` file as `API_KEY`
+2. Add it to your `.env` file as `OPENAI_API_KEY`
 
 ## Running the Application
+
+All commands are run from the repository root.
 
 ### Option 1: Run both backend and frontend together
 ```bash
@@ -103,7 +110,15 @@ poetry run streamlit run llm_rag_app/frontend/frontend.py
 Upload a PDF document for processing.
 
 **Request**: Multipart form with `file` field containing PDF
-**Response**: JSON with processing status and chunk count
+**Response**: JSON with processing status, file name and chunk count
+
+Uploading a file with the same name again replaces its earlier chunks.
+
+### GET `/documents`
+List the names of the uploaded documents.
+
+### DELETE `/documents`
+Delete all documents from the vector database.
 
 ### GET `/ask`
 Query the RAG system with a question.
@@ -154,12 +169,12 @@ llm-rag-app/
 - Check file size limits and PDF format
 
 ### LLM not responding
-- For OpenAI: Verify API key in `.env`
+- For OpenAI: Verify `OPENAI_API_KEY` in `.env`
 - For Ollama: Ensure `ollama serve` is running and model is pulled
 
 ### ChromaDB issues
-- Vector store persists in `./vectorstore/` directory
-- Delete this directory to reset the database
+- Vector store persists in the `./vectorstore/` directory
+- Use the "Delete all documents" button, or delete this directory to reset the database
 
 ## Contributing
 

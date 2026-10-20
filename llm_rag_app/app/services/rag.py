@@ -9,28 +9,61 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 from openai import OpenAI, RateLimitError
 
+from llm_rag_app.app.core.config import (
+    LOCAL_LLM_TIMEOUT,
+    LOCAL_MODEL,
+    N_RESULTS,
+    OLLAMA_BASE_URL,
+    OLLAMA_URL,
+    OPENAI_API_KEY,
+    OPENAI_MODEL,
+)
 from llm_rag_app.app.db.chroma import collection
 
-try:
-    from llm_rag_app.app.core.config import LOCAL_MODEL, OLLAMA_URL, OPENAI_API_KEY
-except ImportError as e:
-    print(
-        f"Error importing config: {e}, make sure you have a config.py with the loaded api key, ollama url, and local model."
-    )
-
-client = OpenAI(api_key=OPENAI_API_KEY)
+# Only create the OpenAI client when a key is configured, so the app also runs with just Ollama
+client: Optional[OpenAI] = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 
 # ------------------------
 # Document ingestion
 # ------------------------
-def add_documents(chunks: List[str]) -> None:
-    """Add document chunks to ChromaDB.
+def add_documents(chunks: List[str], source: str) -> None:
+    """Add document chunks to ChromaDB, replacing earlier chunks of the same source.
 
     Args:
         chunks (List[str]): List of text chunks to add to the database.
+        source (str): Name of the document the chunks belong to.
     """
-    collection.add(documents=chunks, ids=[str(i) for i in range(len(chunks))])
+    delete_documents(source)
+    collection.add(
+        documents=chunks,
+        ids=[f"{source}-{i}" for i in range(len(chunks))],
+        metadatas=[{"source": source, "chunk": i} for i in range(len(chunks))],
+    )
+
+
+def delete_documents(source: Optional[str] = None) -> None:
+    """Delete chunks from ChromaDB.
+
+    Args:
+        source (Optional[str]): Only delete chunks of this document. Deletes everything when None.
+    """
+    if source is None:
+        ids = collection.get()["ids"]
+        if ids:
+            collection.delete(ids=ids)
+    else:
+        collection.delete(where={"source": source})
+
+
+def list_documents() -> List[str]:
+    """List the names of all documents stored in ChromaDB.
+
+    Returns:
+        List[str]: Sorted list of document names.
+    """
+    metadatas = collection.get(include=["metadatas"])["metadatas"] or []
+    return sorted({m["source"] for m in metadatas if m and "source" in m})
 
 
 # ------------------------
@@ -39,7 +72,7 @@ def add_documents(chunks: List[str]) -> None:
 def is_ollama_running() -> bool:
     """Check if Ollama is running."""
     try:
-        response = requests.get("http://localhost:11434", timeout=2)
+        response = requests.get(OLLAMA_BASE_URL, timeout=2)
         return response.status_code == 200
     except requests.exceptions.RequestException:
         return False
@@ -50,7 +83,9 @@ def call_local_llm(prompt: str) -> str:
 
     Assumes Ollama is already running.
     """
-    response = requests.post(OLLAMA_URL, json={"model": LOCAL_MODEL, "prompt": prompt, "stream": False}, timeout=60)
+    response = requests.post(
+        OLLAMA_URL, json={"model": LOCAL_MODEL, "prompt": prompt, "stream": False}, timeout=LOCAL_LLM_TIMEOUT
+    )
 
     response.raise_for_status()
     return response.json()["response"]
@@ -91,7 +126,10 @@ def query(question: str) -> Dict[str, Any]:
     # ------------------------
     # Retrieve context safely
     # ------------------------
-    results = collection.query(query_texts=[question], n_results=3)
+    if collection.count() == 0:
+        return {"answer": "❌ No documents uploaded yet. Upload a PDF first.", "source": "error", "warning": None}
+
+    results = collection.query(query_texts=[question], n_results=min(N_RESULTS, collection.count()))
 
     documents = results.get("documents", [[]])[0]
     context = "\n".join(documents)
@@ -109,85 +147,33 @@ def query(question: str) -> Dict[str, Any]:
     # ------------------------
     # Try OpenAI first
     # ------------------------
-    try:
-        response = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}])
+    if client is None:
+        warning = "⚠️ No OpenAI API key configured. Using local LLM..."
+    else:
+        try:
+            response = client.chat.completions.create(
+                model=OPENAI_MODEL, messages=[{"role": "user", "content": prompt}]
+            )
 
-        return {"answer": response.choices[0].message.content, "source": "openai", "warning": None}
+            return {"answer": response.choices[0].message.content, "source": "openai", "warning": None}
 
-    # ------------------------
-    # OpenAI failure → fallback
-    # ------------------------
-    except Exception as e:
-
-        warning = None
-
-        # Detect quota / rate limit specifically
-        if isinstance(e, RateLimitError):
+        # ------------------------
+        # OpenAI failure → fallback
+        # ------------------------
+        except RateLimitError:
             warning = (
                 "⚠️ OpenAI quota exceeded.\n\n"
                 "👉 Trying local LLM...\n\n"
                 "Fix it here:\n"
                 "https://platform.openai.com/account/billing"
             )
-        else:
+        except Exception:
             warning = "⚠️ OpenAI failed. Trying local LLM..."
 
-        # Try local LLM
-        answer, error = try_local_llm(prompt)
+    # Try local LLM
+    answer, error = try_local_llm(prompt)
 
-        if answer:
-            return {"answer": answer, "source": "local", "warning": warning or "⚠️ Using local LLM fallback"}
+    if answer:
+        return {"answer": answer, "source": "local", "warning": warning}
 
-        return {"answer": f"❌ All LLMs failed: {error}", "source": "error", "warning": warning}
-
-    # ------------------------
-    # Retrieve context safely
-    # ------------------------
-    results = collection.query(query_texts=[question], n_results=3)
-
-    documents = results.get("documents", [[]])[0]
-    context = "\n".join(documents)
-
-    prompt = f"""
-    Answer the question based ONLY on the context below.
-
-    Context:
-    {context}
-
-    Question:
-    {question}
-    """
-
-    # ------------------------
-    # Try OpenAI first
-    # ------------------------
-    try:
-        response = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}])
-
-        return {"answer": response.choices[0].message.content, "source": "openai", "warning": None}
-
-    # ------------------------
-    # OpenAI failure → fallback
-    # ------------------------
-    except Exception as e:
-
-        warning = None
-
-        # Detect quota / rate limit specifically
-        if isinstance(e, RateLimitError):
-            warning = (
-                "⚠️ OpenAI quota exceeded.\n\n"
-                "👉 Trying local LLM...\n\n"
-                "Fix it here:\n"
-                "https://platform.openai.com/account/billing"
-            )
-        else:
-            warning = "⚠️ OpenAI failed. Trying local LLM..."
-
-        # Try local LLM
-        answer, error = try_local_llm(prompt)
-
-        if answer:
-            return {"answer": answer, "source": "local", "warning": warning or "⚠️ Using local LLM fallback"}
-
-        return {"answer": f"❌ All LLMs failed: {error}", "source": "error", "warning": warning}
+    return {"answer": f"❌ All LLMs failed: {error}", "source": "error", "warning": warning}
