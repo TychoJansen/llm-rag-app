@@ -9,8 +9,8 @@ from typing import Any, Dict
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 
-from llm_rag_app.app.core.config import DATA_DIR
-from llm_rag_app.app.services.pdf_utilities import load_pdf, split_text
+from llm_rag_app.app.core.config import CHUNK_OVERLAP, CHUNK_SIZE, DATA_DIR
+from llm_rag_app.app.services.pdf_utilities import chunk_pages, load_pdf
 from llm_rag_app.app.services.rag import add_documents, delete_documents, list_documents, query
 
 router = APIRouter()
@@ -49,8 +49,8 @@ def upload(file: UploadFile = File(...)) -> Dict[str, Any]:
             shutil.copyfileobj(file.file, buffer)
 
         # Process PDF
-        text = load_pdf(str(file_path))
-        chunks = split_text(text)
+        pages = load_pdf(str(file_path))
+        chunks = chunk_pages(pages, chunk_size=CHUNK_SIZE, overlap=CHUNK_OVERLAP)
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Could not process PDF: {e}")
@@ -103,7 +103,7 @@ def ask(question: str) -> Dict[str, Any]:
         question (str): The question to ask.
 
     Returns:
-        Dict[str, Any]: Response containing status, answer, source, and warning.
+        Dict[str, Any]: Response containing status, answer, source, warning, and sources.
 
     Raises:
         HTTPException: If the question is empty or processing fails.
@@ -119,6 +119,7 @@ def ask(question: str) -> Dict[str, Any]:
             "answer": result["answer"],
             "source": result["source"],
             "warning": result["warning"],
+            "sources": result["sources"],
         }
 
     except Exception as e:

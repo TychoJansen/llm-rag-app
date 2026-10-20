@@ -25,4 +25,6 @@ OLLAMA_URL = f"{OLLAMA_BASE_URL}/api/generate"
 LOCAL_MODEL = os.getenv("LOCAL_MODEL", "llama3")
 LOCAL_LLM_TIMEOUT = int(os.getenv("LOCAL_LLM_TIMEOUT", "60"))
 
-N_RESULTS = int(os.getenv("N_RESULTS", "3"))
+N_RESULTS = int(os.getenv("N_RESULTS", "4"))
+CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "800"))
+CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "150"))

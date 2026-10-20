@@ -27,18 +27,18 @@ client: Optional[OpenAI] = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else
 # ------------------------
 # Document ingestion
 # ------------------------
-def add_documents(chunks: List[str], source: str) -> None:
+def add_documents(chunks: List[Dict[str, Any]], source: str) -> None:
     """Add document chunks to ChromaDB, replacing earlier chunks of the same source.
 
     Args:
-        chunks (List[str]): List of text chunks to add to the database.
+        chunks (List[Dict[str, Any]]): List of chunks as dicts with "text" and "page" keys.
         source (str): Name of the document the chunks belong to.
     """
     delete_documents(source)
     collection.add(
-        documents=chunks,
+        documents=[chunk["text"] for chunk in chunks],
         ids=[f"{source}-{i}" for i in range(len(chunks))],
-        metadatas=[{"source": source, "chunk": i} for i in range(len(chunks))],
+        metadatas=[{"source": source, "page": chunk["page"], "chunk": i} for i, chunk in enumerate(chunks)],
     )
 
 
@@ -121,18 +121,31 @@ def query(question: str) -> Dict[str, Any]:
         question (str): The question to ask.
 
     Returns:
-        Dict[str, Any]: Response containing answer, source, and warning.
+        Dict[str, Any]: Response containing answer, source (the LLM used), warning, and
+            sources (the retrieved chunks with document name and page number).
     """
     # ------------------------
     # Retrieve context safely
     # ------------------------
     if collection.count() == 0:
-        return {"answer": "❌ No documents uploaded yet. Upload a PDF first.", "source": "error", "warning": None}
+        return {
+            "answer": "❌ No documents uploaded yet. Upload a PDF first.",
+            "source": "error",
+            "warning": None,
+            "sources": [],
+        }
 
     results = collection.query(query_texts=[question], n_results=min(N_RESULTS, collection.count()))
 
     documents = results.get("documents", [[]])[0]
-    context = "\n".join(documents)
+    metadatas = results.get("metadatas", [[]])[0]
+    sources = [
+        {"document": (meta or {}).get("source"), "page": (meta or {}).get("page"), "text": text}
+        for text, meta in zip(documents, metadatas)
+    ]
+
+    # Label each chunk with its origin so the LLM can tell the fragments apart
+    context = "\n\n".join(f"[{s['document']}, page {s['page']}]\n{s['text']}" for s in sources)
 
     prompt = f"""
     Answer the question based ONLY on the context below.
@@ -155,7 +168,12 @@ def query(question: str) -> Dict[str, Any]:
                 model=OPENAI_MODEL, messages=[{"role": "user", "content": prompt}]
             )
 
-            return {"answer": response.choices[0].message.content, "source": "openai", "warning": None}
+            return {
+                "answer": response.choices[0].message.content,
+                "source": "openai",
+                "warning": None,
+                "sources": sources,
+            }
 
         # ------------------------
         # OpenAI failure → fallback
@@ -174,6 +192,6 @@ def query(question: str) -> Dict[str, Any]:
     answer, error = try_local_llm(prompt)
 
     if answer:
-        return {"answer": answer, "source": "local", "warning": warning}
+        return {"answer": answer, "source": "local", "warning": warning, "sources": sources}
 
-    return {"answer": f"❌ All LLMs failed: {error}", "source": "error", "warning": warning}
+    return {"answer": f"❌ All LLMs failed: {error}", "source": "error", "warning": warning, "sources": []}

@@ -5,7 +5,7 @@ Provides a ChatGPT-style UI for uploading PDFs and chatting with documents.
 
 import hashlib
 import os
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import requests
 import streamlit as st
@@ -52,20 +52,51 @@ def ask_backend(question: str) -> Dict[str, Any]:
         question (str): The question to ask.
 
     Returns:
-        Dict[str, Any]: Dict with answer, warning and source.
+        Dict[str, Any]: Dict with answer, warning, source (the LLM used) and sources (the retrieved chunks).
     """
     try:
         response = requests.get(f"{BACKEND_URL}/ask", params={"question": question}, timeout=ASK_TIMEOUT)
     except requests.exceptions.Timeout:
-        return {"answer": "❌ The backend took too long to answer.", "warning": None, "source": None}
+        return {"answer": "❌ The backend took too long to answer.", "warning": None, "source": None, "sources": []}
     except requests.exceptions.RequestException:
-        return {"answer": "❌ Backend error. Please check if the API is running.", "warning": None, "source": None}
+        return {
+            "answer": "❌ Backend error. Please check if the API is running.",
+            "warning": None,
+            "source": None,
+            "sources": [],
+        }
 
     if response.status_code != 200:
-        return {"answer": f"❌ Backend error: {error_detail(response)}", "warning": None, "source": None}
+        return {
+            "answer": f"❌ Backend error: {error_detail(response)}",
+            "warning": None,
+            "source": None,
+            "sources": [],
+        }
 
     data = response.json()
-    return {"answer": data.get("answer", ""), "warning": data.get("warning"), "source": data.get("source")}
+    return {
+        "answer": data.get("answer", ""),
+        "warning": data.get("warning"),
+        "source": data.get("source"),
+        "sources": data.get("sources") or [],
+    }
+
+
+def show_sources(sources: List[Dict[str, Any]]) -> None:
+    """Show the document fragments an answer was based on in a collapsible block.
+
+    Args:
+        sources (List[Dict[str, Any]]): Retrieved chunks with document, page and text.
+    """
+    if not sources:
+        return
+
+    with st.expander(f"📚 Sources ({len(sources)})"):
+        for source in sources:
+            page = f", page {source['page']}" if source.get("page") else ""
+            st.markdown(f"**{source.get('document') or 'Unknown document'}{page}**")
+            st.caption(source.get("text", ""))
 
 
 # -----------------------------
@@ -161,8 +192,9 @@ st.title("🧠 Chat with your Documents")
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.write(msg["content"])
+        show_sources(msg.get("sources", []))
         if msg.get("source"):
-            st.caption(f"Source: {msg['source']}")
+            st.caption(f"Answered by: {msg['source']}")
 
 # -----------------------------
 # CHAT INPUT
@@ -181,7 +213,7 @@ if prompt:
         with st.spinner("Thinking..."):
             result = ask_backend(prompt)
 
-        answer, warning, source = result["answer"], result["warning"], result["source"]
+        answer, warning, source, sources = result["answer"], result["warning"], result["source"], result["sources"]
 
         # --- Show warning ---
         if warning and not st.session_state.quota_warning_shown:
@@ -197,11 +229,17 @@ if prompt:
             else:
                 st.write(answer)
 
-        # --- Show source ---
+        # --- Show sources and model ---
+        show_sources(sources)
         if source and source != "error":
-            st.caption(f"Source: {source}")
+            st.caption(f"Answered by: {source}")
 
     # --- Save assistant message ---
     st.session_state.messages.append(
-        {"role": "assistant", "content": answer, "source": source if source != "error" else None}
+        {
+            "role": "assistant",
+            "content": answer,
+            "source": source if source != "error" else None,
+            "sources": sources,
+        }
     )

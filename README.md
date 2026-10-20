@@ -50,7 +50,7 @@ A Retrieval-Augmented Generation (RAG) application that allows users to upload P
    The OpenAI key is optional: without it the app uses the local Ollama model. The old `API_KEY` name still works.
 
    Optional settings (with defaults): `OPENAI_MODEL=gpt-4o-mini`, `LOCAL_MODEL=llama3`,
-   `OLLAMA_BASE_URL=http://localhost:11434`, `LOCAL_LLM_TIMEOUT=60`, `N_RESULTS=3`,
+   `OLLAMA_BASE_URL=http://localhost:11434`, `LOCAL_LLM_TIMEOUT=60`, `N_RESULTS=4`, `CHUNK_SIZE=800`, `CHUNK_OVERLAP=150`,
    `DATA_DIR=./data`, `VECTORSTORE_DIR=./vectorstore`, and `BACKEND_URL=http://127.0.0.1:8000` for the frontend.
 
 ## Setup
@@ -100,9 +100,9 @@ poetry run streamlit run llm_rag_app/frontend/frontend.py
 ## Usage
 
 1. **Upload a PDF**: Use the sidebar in the Streamlit interface to upload a PDF document
-2. **Wait for processing**: The app will extract text, split it into chunks, and index them
+2. **Wait for processing**: The app extracts the text per page, splits it into sentence-aware chunks, and indexes them
 3. **Ask questions**: Type questions in the chat interface about your document
-4. **Get answers**: The app will retrieve relevant context and generate answers using LLMs
+4. **Get answers**: The app retrieves relevant context and generates answers using LLMs. Open "Sources" under an answer to see the document fragments and page numbers it was based on
 
 ## API Endpoints
 
