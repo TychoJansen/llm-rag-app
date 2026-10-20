@@ -95,7 +95,8 @@ def show_sources(sources: List[Dict[str, Any]]) -> None:
     with st.expander(f"📚 Sources ({len(sources)})"):
         for source in sources:
             page = f", page {source['page']}" if source.get("page") else ""
-            st.markdown(f"**{source.get('document') or 'Unknown document'}{page}**")
+            score = f" · relevance {source['relevance']:.2f}" if source.get("relevance") is not None else ""
+            st.markdown(f"**{source.get('document') or 'Unknown document'}{page}**{score}")
             st.caption(source.get("text", ""))
 
 
@@ -133,11 +134,6 @@ with st.sidebar:
     1. Upload a PDF
     2. Ask questions
     3. Get answers from your document
-
-    ### Tech
-    - FastAPI
-    - ChromaDB
-    - OpenAI / Ollama
     """
     )
 

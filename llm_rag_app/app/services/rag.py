@@ -12,6 +12,7 @@ from openai import OpenAI, RateLimitError
 from llm_rag_app.app.core.config import (
     LOCAL_LLM_TIMEOUT,
     LOCAL_MODEL,
+    MIN_RELEVANCE,
     N_RESULTS,
     OLLAMA_BASE_URL,
     OLLAMA_URL,
@@ -111,6 +112,22 @@ def try_local_llm(prompt: str) -> Tuple[Optional[str], Optional[str]]:
 # ------------------------
 # Main query function
 # ------------------------
+def relevance(distance: float) -> float:
+    """Convert a ChromaDB distance to a relevance score.
+
+    The collection uses squared L2 distance on normalized embeddings, for which
+    distance = 2 - 2 * cosine similarity. The score is therefore the cosine similarity:
+    1 means identical meaning, around 0 means unrelated.
+
+    Args:
+        distance (float): Squared L2 distance returned by ChromaDB.
+
+    Returns:
+        float: Cosine similarity between the question and the chunk.
+    """
+    return 1 - distance / 2
+
+
 def query(question: str) -> Dict[str, Any]:
     """Query the RAG system for an answer.
 
@@ -139,10 +156,26 @@ def query(question: str) -> Dict[str, Any]:
 
     documents = results.get("documents", [[]])[0]
     metadatas = results.get("metadatas", [[]])[0]
+    distances = results.get("distances", [[]])[0]
     sources = [
-        {"document": (meta or {}).get("source"), "page": (meta or {}).get("page"), "text": text}
-        for text, meta in zip(documents, metadatas)
+        {
+            "document": (meta or {}).get("source"),
+            "page": (meta or {}).get("page"),
+            "text": text,
+            "relevance": round(relevance(distance), 3),
+        }
+        for text, meta, distance in zip(documents, metadatas, distances)
     ]
+
+    # Drop chunks that are not related to the question, instead of letting the LLM guess
+    sources = [s for s in sources if s["relevance"] >= MIN_RELEVANCE]
+    if not sources:
+        return {
+            "answer": "🔍 I couldn't find relevant information about this in the uploaded documents.",
+            "source": None,
+            "warning": None,
+            "sources": [],
+        }
 
     # Label each chunk with its origin so the LLM can tell the fragments apart
     context = "\n\n".join(f"[{s['document']}, page {s['page']}]\n{s['text']}" for s in sources)

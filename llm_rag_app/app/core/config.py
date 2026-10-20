@@ -26,5 +26,7 @@ LOCAL_MODEL = os.getenv("LOCAL_MODEL", "llama3")
 LOCAL_LLM_TIMEOUT = int(os.getenv("LOCAL_LLM_TIMEOUT", "60"))
 
 N_RESULTS = int(os.getenv("N_RESULTS", "4"))
+# Minimum relevance (cosine similarity, -1 to 1) for a chunk to be used as context
+MIN_RELEVANCE = float(os.getenv("MIN_RELEVANCE", "0.1"))
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "800"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "150"))
